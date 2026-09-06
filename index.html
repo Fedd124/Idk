@@ -1,0 +1,1568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ultra Realistic Dance Animation</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #050507;
+    font-family: Arial, sans-serif;
+}
+
+canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+}
+
+#ui {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    color: rgba(255,255,255,.8);
+    font-size: 13px;
+    letter-spacing: 1px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: rgba(0,0,0,.3);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,.08);
+}
+
+#loading {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    background: #050507;
+    z-index: 10;
+    transition: opacity 1s;
+}
+
+.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+</style>
+</head>
+
+<body>
+
+<div id="loading">
+    Loading scene...
+</div>
+
+<canvas id="scene"></canvas>
+
+<div id="ui">
+    REAL-TIME DANCE • 60 FPS
+</div>
+
+<script>
+
+const canvas = document.getElementById("scene");
+const ctx = canvas.getContext("2d");
+
+let W = 0;
+let H = 0;
+let DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+function resize() {
+
+    W = window.innerWidth;
+    H = window.innerHeight;
+
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+setTimeout(() => {
+    document.getElementById("loading").classList.add("hidden");
+}, 1000);
+
+
+/* =========================================================
+   MATH
+========================================================= */
+
+function lerp(a,b,t) {
+    return a + (b-a)*t;
+}
+
+function clamp(v,a,b) {
+    return Math.max(a,Math.min(b,v));
+}
+
+function smooth(t) {
+    return t*t*(3-2*t);
+}
+
+function easeInOut(t) {
+    return t < .5
+        ? 2*t*t
+        : 1-Math.pow(-2*t+2,2)/2;
+}
+
+function noise(x) {
+    return Math.sin(x*12.9898)*43758.5453 % 1;
+}
+
+
+/* =========================================================
+   CAMERA
+========================================================= */
+
+let cameraX = 0;
+let cameraY = 0;
+let cameraZoom = 1;
+
+function worldToScreen(x,y) {
+
+    return {
+        x: W/2 + (x-cameraX)*cameraZoom,
+        y: H/2 + (y-cameraY)*cameraZoom
+    };
+
+}
+
+
+/* =========================================================
+   BACKGROUND
+========================================================= */
+
+function drawBackground(t) {
+
+    const cx = W/2;
+    const cy = H*.42;
+
+    let g = ctx.createRadialGradient(
+        cx,
+        cy,
+        20,
+        cx,
+        cy,
+        Math.max(W,H)*.8
+    );
+
+    g.addColorStop(0,"#25242a");
+    g.addColorStop(.35,"#101015");
+    g.addColorStop(1,"#030305");
+
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,W,H);
+
+
+    /* blue atmospheric light */
+
+    let blue = ctx.createRadialGradient(
+        W*.15,
+        H*.25,
+        0,
+        W*.15,
+        H*.25,
+        W*.6
+    );
+
+    blue.addColorStop(0,"rgba(70,110,255,.20)");
+    blue.addColorStop(1,"rgba(0,0,0,0)");
+
+    ctx.fillStyle = blue;
+    ctx.fillRect(0,0,W,H);
+
+
+    /* warm light */
+
+    let warm = ctx.createRadialGradient(
+        W*.82,
+        H*.28,
+        0,
+        W*.82,
+        H*.28,
+        W*.55
+    );
+
+    warm.addColorStop(0,"rgba(255,145,75,.13)");
+    warm.addColorStop(1,"rgba(0,0,0,0)");
+
+    ctx.fillStyle = warm;
+    ctx.fillRect(0,0,W,H);
+
+
+    /* haze */
+
+    for(let i=0;i<5;i++) {
+
+        let x = W*(.1+i*.2);
+
+        let haze = ctx.createRadialGradient(
+            x,
+            H*.5,
+            0,
+            x,
+            H*.5,
+            W*.25
+        );
+
+        haze.addColorStop(
+            0,
+            `rgba(255,255,255,${.015 + Math.sin(t+i)*.006})`
+        );
+
+        haze.addColorStop(1,"rgba(0,0,0,0)");
+
+        ctx.fillStyle = haze;
+        ctx.fillRect(0,0,W,H);
+    }
+}
+
+
+/* =========================================================
+   FLOOR
+========================================================= */
+
+function drawFloor() {
+
+    const horizon = H*.69;
+
+    let floor = ctx.createLinearGradient(
+        0,
+        horizon,
+        0,
+        H
+    );
+
+    floor.addColorStop(0,"#17171c");
+    floor.addColorStop(1,"#030304");
+
+    ctx.fillStyle = floor;
+    ctx.fillRect(0,horizon,W,H-horizon);
+
+
+    /* floor spotlight */
+
+    let light = ctx.createRadialGradient(
+        W/2,
+        H*.73,
+        10,
+        W/2,
+        H*.73,
+        W*.45
+    );
+
+    light.addColorStop(0,"rgba(255,255,255,.12)");
+    light.addColorStop(1,"rgba(255,255,255,0)");
+
+    ctx.fillStyle = light;
+    ctx.fillRect(0,horizon,W,H-horizon);
+
+
+    /* floor lines */
+
+    ctx.strokeStyle = "rgba(255,255,255,.035)";
+    ctx.lineWidth = 1;
+
+    for(let i=-10;i<=10;i++) {
+
+        ctx.beginPath();
+
+        ctx.moveTo(W/2+i*80,H*.69);
+        ctx.lineTo(W/2+i*250,H);
+
+        ctx.stroke();
+    }
+
+    for(let i=0;i<8;i++) {
+
+        let y = H*.69 + Math.pow(i/8,1.7)*H*.4;
+
+        ctx.beginPath();
+        ctx.moveTo(0,y);
+        ctx.lineTo(W,y);
+        ctx.stroke();
+    }
+}
+
+
+/* =========================================================
+   LIGHT BEAMS
+========================================================= */
+
+function drawLights(t) {
+
+    ctx.save();
+
+    ctx.globalCompositeOperation = "screen";
+
+    const beams = [
+        {
+            x:W*.15,
+            color:"rgba(70,120,255,.08)",
+            angle:-.18
+        },
+        {
+            x:W*.85,
+            color:"rgba(255,90,40,.07)",
+            angle:.18
+        }
+    ];
+
+    beams.forEach((b,i)=>{
+
+        ctx.save();
+
+        ctx.translate(b.x,0);
+        ctx.rotate(b.angle);
+
+        let g = ctx.createLinearGradient(
+            0,
+            0,
+            0,
+            H
+        );
+
+        g.addColorStop(0,b.color);
+        g.addColorStop(1,"rgba(0,0,0,0)");
+
+        ctx.fillStyle = g;
+
+        ctx.beginPath();
+
+        ctx.moveTo(-70,0);
+        ctx.lineTo(70,0);
+        ctx.lineTo(400,H);
+        ctx.lineTo(-400,H);
+
+        ctx.closePath();
+
+        ctx.fill();
+
+        ctx.restore();
+    });
+
+    ctx.restore();
+}
+
+
+/* =========================================================
+   BODY MODEL
+========================================================= */
+
+class Point {
+
+    constructor(x,y) {
+        this.x=x;
+        this.y=y;
+    }
+
+    clone() {
+        return new Point(this.x,this.y);
+    }
+}
+
+
+function rotatePoint(p, angle, origin) {
+
+    let dx=p.x-origin.x;
+    let dy=p.y-origin.y;
+
+    let c=Math.cos(angle);
+    let s=Math.sin(angle);
+
+    return new Point(
+        origin.x+dx*c-dy*s,
+        origin.y+dx*s+dy*c
+    );
+}
+
+
+/* =========================================================
+   REALISTIC LIMB
+========================================================= */
+
+function limb(a,b,widthA,widthB,skin=true) {
+
+    let dx=b.x-a.x;
+    let dy=b.y-a.y;
+
+    let len=Math.sqrt(dx*dx+dy*dy);
+
+    let nx=-dy/len;
+    let ny=dx/len;
+
+    let ax=a.x+nx*widthA;
+    let ay=a.y+ny*widthA;
+
+    let bx=b.x+nx*widthB;
+    let by=b.y+ny*widthB;
+
+    let cx=b.x-nx*widthB;
+    let cy=b.y-ny*widthB;
+
+    let dx2=a.x-nx*widthA;
+    let dy2=a.y-ny*widthA;
+
+
+    let gradient;
+
+    if(skin) {
+
+        gradient = ctx.createLinearGradient(
+            ax,
+            ay,
+            cx,
+            cy
+        );
+
+        gradient.addColorStop(0,"#5b3026");
+        gradient.addColorStop(.2,"#b66e58");
+        gradient.addColorStop(.45,"#d99379");
+        gradient.addColorStop(.7,"#a85f4d");
+        gradient.addColorStop(1,"#4d2924");
+
+    } else {
+
+        gradient = ctx.createLinearGradient(
+            ax,
+            ay,
+            cx,
+            cy
+        );
+
+        gradient.addColorStop(0,"#030304");
+        gradient.addColorStop(.35,"#17171a");
+        gradient.addColorStop(.6,"#09090b");
+        gradient.addColorStop(1,"#010102");
+    }
+
+
+    ctx.fillStyle=gradient;
+
+    ctx.beginPath();
+
+    ctx.moveTo(dx2,dy2);
+    ctx.quadraticCurveTo(
+        a.x+nx*widthA*1.15,
+        a.y+ny*widthA*1.15,
+        ax,ay
+    );
+
+    ctx.lineTo(bx,by);
+
+    ctx.quadraticCurveTo(
+        b.x+nx*widthB*1.1,
+        b.y+ny*widthB*1.1,
+        cx,cy
+    );
+
+    ctx.lineTo(dx2,dy2);
+
+    ctx.fill();
+
+
+    /* soft highlight */
+
+    if(skin) {
+
+        ctx.strokeStyle="rgba(255,210,190,.16)";
+        ctx.lineWidth=widthA*.15;
+
+        ctx.beginPath();
+
+        ctx.moveTo(
+            a.x+nx*widthA*.45,
+            a.y+ny*widthA*.45
+        );
+
+        ctx.lineTo(
+            b.x+nx*widthB*.45,
+            b.y+ny*widthB*.45
+        );
+
+        ctx.stroke();
+    }
+}
+
+
+/* =========================================================
+   JOINT
+========================================================= */
+
+function joint(p,r,skin=true) {
+
+    let g;
+
+    if(skin) {
+
+        g=ctx.createRadialGradient(
+            p.x-r*.3,
+            p.y-r*.5,
+            r*.1,
+            p.x,
+            p.y,
+            r
+        );
+
+        g.addColorStop(0,"#e0a087");
+        g.addColorStop(.45,"#bb715c");
+        g.addColorStop(1,"#572e28");
+
+    } else {
+
+        g=ctx.createRadialGradient(
+            p.x-r*.3,
+            p.y-r*.3,
+            0,
+            p.x,
+            p.y,
+            r
+        );
+
+        g.addColorStop(0,"#25252a");
+        g.addColorStop(1,"#030304");
+    }
+
+    ctx.fillStyle=g;
+
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,r,0,Math.PI*2);
+    ctx.fill();
+}
+
+
+/* =========================================================
+   HEAD
+========================================================= */
+
+function drawHead(head, scale, tilt, t) {
+
+    ctx.save();
+
+    ctx.translate(head.x,head.y);
+    ctx.rotate(tilt);
+
+
+    /* neck */
+
+    let neck=ctx.createLinearGradient(-18,25,18,60);
+
+    neck.addColorStop(0,"#9d5c4c");
+    neck.addColorStop(.5,"#d38b73");
+    neck.addColorStop(1,"#704034");
+
+    ctx.fillStyle=neck;
+
+    ctx.beginPath();
+
+    ctx.roundRect(
+        -17,
+        25,
+        34,
+        55,
+        12
+    );
+
+    ctx.fill();
+
+
+    /* face */
+
+    let face=ctx.createRadialGradient(
+        -12,
+        -18,
+        2,
+        0,
+        0,
+        82
+    );
+
+    face.addColorStop(0,"#e2a188");
+    face.addColorStop(.35,"#ca8068");
+    face.addColorStop(.7,"#a85f4d");
+    face.addColorStop(1,"#552d28");
+
+    ctx.fillStyle=face;
+
+    ctx.beginPath();
+
+    ctx.ellipse(
+        0,
+        0,
+        50,
+        67,
+        0,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+
+    /* ears */
+
+    ctx.fillStyle="#ad6754";
+
+    ctx.beginPath();
+    ctx.ellipse(-49,4,10,17,0,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.ellipse(49,4,10,17,0,0,Math.PI*2);
+    ctx.fill();
+
+
+    /* cheek highlights */
+
+    let cheek=ctx.createRadialGradient(
+        -20,
+        18,
+        1,
+        -20,
+        18,
+        25
+    );
+
+    cheek.addColorStop(0,"rgba(255,190,170,.25)");
+    cheek.addColorStop(1,"rgba(255,190,170,0)");
+
+    ctx.fillStyle=cheek;
+
+    ctx.beginPath();
+    ctx.arc(-20,18,25,0,Math.PI*2);
+    ctx.fill();
+
+
+    /* eyes */
+
+    drawEye(-19,-7);
+    drawEye(19,-7);
+
+
+    /* eyebrows */
+
+    ctx.strokeStyle="#542b25";
+    ctx.lineWidth=5;
+    ctx.lineCap="round";
+
+    ctx.beginPath();
+    ctx.moveTo(-31,-19);
+    ctx.quadraticCurveTo(-19,-27,-7,-20);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(7,-20);
+    ctx.quadraticCurveTo(19,-27,31,-19);
+    ctx.stroke();
+
+
+    /* nose */
+
+    ctx.strokeStyle="rgba(80,38,32,.5)";
+    ctx.lineWidth=3;
+
+    ctx.beginPath();
+
+    ctx.moveTo(2,-2);
+    ctx.quadraticCurveTo(
+        -1,
+        13,
+        -6,
+        21
+    );
+
+    ctx.quadraticCurveTo(
+        0,
+        25,
+        7,
+        22
+    );
+
+    ctx.stroke();
+
+
+    /* lips */
+
+    let lips=ctx.createLinearGradient(
+        0,
+        29,
+        0,
+        39
+    );
+
+    lips.addColorStop(0,"#7b343d");
+    lips.addColorStop(.5,"#b85b63");
+    lips.addColorStop(1,"#59242d");
+
+    ctx.fillStyle=lips;
+
+    ctx.beginPath();
+
+    ctx.moveTo(-12,31);
+
+    ctx.quadraticCurveTo(
+        0,
+        25,
+        12,
+        31
+    );
+
+    ctx.quadraticCurveTo(
+        0,
+        43,
+        -12,
+        31
+    );
+
+    ctx.fill();
+
+
+    /* hair */
+
+    drawHair(t);
+
+    ctx.restore();
+}
+
+
+/* =========================================================
+   EYE
+========================================================= */
+
+function drawEye(x,y) {
+
+    ctx.fillStyle="#f4e6dc";
+
+    ctx.beginPath();
+
+    ctx.ellipse(
+        x,
+        y,
+        12,
+        6,
+        0,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+
+    ctx.fillStyle="#281916";
+
+    ctx.beginPath();
+
+    ctx.arc(
+        x,
+        y,
+        4,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+
+    ctx.fillStyle="white";
+
+    ctx.beginPath();
+
+    ctx.arc(
+        x-1,
+        y-1,
+        1.2,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+}
+
+
+/* =========================================================
+   HAIR
+========================================================= */
+
+function drawHair(t) {
+
+    let hair=ctx.createRadialGradient(
+        -20,
+        -50,
+        5,
+        0,
+        -15,
+        80
+    );
+
+    hair.addColorStop(0,"#45302a");
+    hair.addColorStop(.3,"#1e1717");
+    hair.addColorStop(.7,"#09090b");
+    hair.addColorStop(1,"#020204");
+
+    ctx.fillStyle=hair;
+
+    ctx.beginPath();
+
+    ctx.moveTo(-48,-10);
+
+    ctx.quadraticCurveTo(
+        -65,-65,
+        -25,-85
+    );
+
+    ctx.quadraticCurveTo(
+        15,-105,
+        47,-70
+    );
+
+    ctx.quadraticCurveTo(
+        67,-40,
+        48,35
+    );
+
+    ctx.quadraticCurveTo(
+        61,70,
+        35,85
+    );
+
+    ctx.quadraticCurveTo(
+        43,35,
+        31,-15
+    );
+
+    ctx.quadraticCurveTo(
+        15,-55,
+        -5,-59
+    );
+
+    ctx.quadraticCurveTo(
+        -30,-57,
+        -48,-10
+    );
+
+    ctx.fill();
+
+
+    /* individual strands */
+
+    ctx.strokeStyle="rgba(120,85,70,.22)";
+    ctx.lineWidth=2;
+
+    for(let i=0;i<18;i++) {
+
+        let x=-42+i*5;
+
+        ctx.beginPath();
+
+        ctx.moveTo(x,-54);
+
+        ctx.bezierCurveTo(
+            x-15,
+            -20,
+            x+15,
+            15,
+            x+Math.sin(t*2+i)*15,
+            60
+        );
+
+        ctx.stroke();
+    }
+}
+
+
+/* =========================================================
+   BODY
+========================================================= */
+
+function drawTorso(body, t) {
+
+    let shoulder=body.shoulder;
+    let waist=body.waist;
+    let hip=body.hip;
+
+
+    /* back shadow */
+
+    let g=ctx.createLinearGradient(
+        shoulder.x-70,
+        0,
+        shoulder.x+70,
+        0
+    );
+
+    g.addColorStop(0,"#020203");
+    g.addColorStop(.25,"#111115");
+    g.addColorStop(.5,"#29292d");
+    g.addColorStop(.7,"#101013");
+    g.addColorStop(1,"#020203");
+
+    ctx.fillStyle=g;
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        shoulder.x-65,
+        shoulder.y
+    );
+
+    ctx.quadraticCurveTo(
+        waist.x-42,
+        waist.y-10,
+        waist.x-30,
+        waist.y+20
+    );
+
+    ctx.lineTo(
+        hip.x-53,
+        hip.y
+    );
+
+    ctx.quadraticCurveTo(
+        hip.x,
+        hip.y+25,
+        hip.x+53,
+        hip.y
+    );
+
+    ctx.lineTo(
+        waist.x+30,
+        waist.y+20
+    );
+
+    ctx.quadraticCurveTo(
+        waist.x+42,
+        waist.y-10,
+        shoulder.x+65,
+        shoulder.y
+    );
+
+    ctx.closePath();
+
+    ctx.fill();
+
+
+    /* subtle clothing shine */
+
+    let shine=ctx.createLinearGradient(
+        shoulder.x-50,
+        shoulder.y,
+        shoulder.x+50,
+        hip.y
+    );
+
+    shine.addColorStop(0,"rgba(255,255,255,.01)");
+    shine.addColorStop(.5,"rgba(255,255,255,.11)");
+    shine.addColorStop(1,"rgba(255,255,255,.015)");
+
+    ctx.fillStyle=shine;
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        shoulder.x-40,
+        shoulder.y
+    );
+
+    ctx.quadraticCurveTo(
+        waist.x-20,
+        waist.y,
+        hip.x-35,
+        hip.y
+    );
+
+    ctx.lineTo(
+        hip.x+35,
+        hip.y
+    );
+
+    ctx.quadraticCurveTo(
+        waist.x+20,
+        waist.y,
+        shoulder.x+40,
+        shoulder.y
+    );
+
+    ctx.closePath();
+
+    ctx.fill();
+}
+
+
+/* =========================================================
+   SHOES
+========================================================= */
+
+function shoe(p,angle,scale) {
+
+    ctx.save();
+
+    ctx.translate(p.x,p.y);
+    ctx.rotate(angle);
+
+    let g=ctx.createLinearGradient(
+        0,
+        -12,
+        0,
+        15
+    );
+
+    g.addColorStop(0,"#38383d");
+    g.addColorStop(.35,"#111115");
+    g.addColorStop(1,"#020203");
+
+    ctx.fillStyle=g;
+
+    ctx.beginPath();
+
+    ctx.roundRect(
+        -28*scale,
+        -10*scale,
+        60*scale,
+        23*scale,
+        10*scale
+    );
+
+    ctx.fill();
+
+
+    ctx.fillStyle="rgba(255,255,255,.18)";
+
+    ctx.fillRect(
+        -24*scale,
+        7*scale,
+        50*scale,
+        3*scale
+    );
+
+    ctx.restore();
+}
+
+
+/* =========================================================
+   HAND
+========================================================= */
+
+function hand(p,angle,scale) {
+
+    ctx.save();
+
+    ctx.translate(p.x,p.y);
+    ctx.rotate(angle);
+
+    let g=ctx.createLinearGradient(
+        -10,
+        0,
+        15,
+        0
+    );
+
+    g.addColorStop(0,"#63362c");
+    g.addColorStop(.45,"#cf8870");
+    g.addColorStop(1,"#754034");
+
+    ctx.fillStyle=g;
+
+    ctx.beginPath();
+
+    ctx.ellipse(
+        0,
+        0,
+        15*scale,
+        24*scale,
+        0,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+
+    /* fingers */
+
+    ctx.strokeStyle="#a86554";
+    ctx.lineWidth=2;
+
+    for(let i=0;i<4;i++) {
+
+        ctx.beginPath();
+
+        ctx.moveTo(
+            -5+i*3,
+            -8
+        );
+
+        ctx.lineTo(
+            -8+i*4,
+            -22
+        );
+
+        ctx.stroke();
+    }
+
+    ctx.restore();
+}
+
+
+/* =========================================================
+   DANCER
+========================================================= */
+
+function drawDancer(t) {
+
+    let beat=Math.sin(t*3.1);
+    let beat2=Math.sin(t*6.2);
+    let sway=Math.sin(t*1.55);
+
+    const scale=Math.min(W,H)/720;
+
+    let baseX=W/2;
+    let baseY=H*.73;
+
+    let hip={
+        x:baseX+sway*18*scale,
+        y:baseY
+    };
+
+    let waist={
+        x:hip.x+sway*7*scale,
+        y:hip.y-135*scale
+    };
+
+    let shoulder={
+        x:waist.x-sway*6*scale,
+        y:waist.y-125*scale
+    };
+
+
+    /* head */
+
+    let head={
+        x:shoulder.x+sway*10*scale,
+        y:shoulder.y-80*scale
+    };
+
+
+    /* legs */
+
+    let leftKnee={
+        x:hip.x-43*scale+beat*18*scale,
+        y:hip.y+145*scale
+    };
+
+    let rightKnee={
+        x:hip.x+43*scale-beat*13*scale,
+        y:hip.y+145*scale
+    };
+
+
+    let leftFoot={
+        x:leftKnee.x-18*scale+Math.sin(t*2.2)*15*scale,
+        y:leftKnee.y+140*scale
+    };
+
+    let rightFoot={
+        x:rightKnee.x+24*scale+Math.cos(t*2.2)*12*scale,
+        y:rightKnee.y+140*scale
+    };
+
+
+    /* arms */
+
+    let leftElbow={
+        x:shoulder.x-95*scale,
+        y:shoulder.y+65*scale+beat*25*scale
+    };
+
+    let rightElbow={
+        x:shoulder.x+95*scale,
+        y:shoulder.y+45*scale-beat*25*scale
+    };
+
+
+    let leftHand={
+        x:leftElbow.x-55*scale,
+        y:leftElbow.y-35*scale+beat2*20*scale
+    };
+
+    let rightHand={
+        x:rightElbow.x+60*scale,
+        y:rightElbow.y-50*scale-beat2*18*scale
+    };
+
+
+    /* cast shadow */
+
+    ctx.save();
+
+    let shadowX=(leftFoot.x+rightFoot.x)/2;
+
+    let sg=ctx.createRadialGradient(
+        shadowX,
+        H*.88,
+        5,
+        shadowX,
+        H*.88,
+        160*scale
+    );
+
+    sg.addColorStop(0,"rgba(0,0,0,.65)");
+    sg.addColorStop(1,"rgba(0,0,0,0)");
+
+    ctx.fillStyle=sg;
+
+    ctx.beginPath();
+
+    ctx.ellipse(
+        shadowX,
+        H*.88,
+        150*scale,
+        30*scale,
+        0,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+    ctx.restore();
+
+
+    /* legs */
+
+    limb(
+        hip,
+        leftKnee,
+        34*scale,
+        27*scale,
+        true
+    );
+
+    limb(
+        leftKnee,
+        leftFoot,
+        27*scale,
+        19*scale,
+        true
+    );
+
+
+    limb(
+        hip,
+        rightKnee,
+        34*scale,
+        27*scale,
+        true
+    );
+
+    limb(
+        rightKnee,
+        rightFoot,
+        27*scale,
+        19*scale,
+        true
+    );
+
+
+    joint(leftKnee,29*scale,true);
+    joint(rightKnee,29*scale,true);
+
+
+    /* shoes */
+
+    shoe(
+        leftFoot,
+        -.15+beat*.1,
+        scale
+    );
+
+    shoe(
+        rightFoot,
+        .15-beat*.1,
+        scale
+    );
+
+
+    /* torso */
+
+    drawTorso(
+        {
+            shoulder,
+            waist,
+            hip
+        },
+        t
+    );
+
+
+    /* arms */
+
+    limb(
+        shoulder,
+        leftElbow,
+        25*scale,
+        19*scale,
+        true
+    );
+
+    limb(
+        leftElbow,
+        leftHand,
+        19*scale,
+        13*scale,
+        true
+    );
+
+
+    limb(
+        shoulder,
+        rightElbow,
+        25*scale,
+        19*scale,
+        true
+    );
+
+    limb(
+        rightElbow,
+        rightHand,
+        19*scale,
+        13*scale,
+        true
+    );
+
+
+    joint(leftElbow,20*scale,true);
+    joint(rightElbow,20*scale,true);
+
+
+    hand(
+        leftHand,
+        -.5+beat2*.2,
+        scale
+    );
+
+    hand(
+        rightHand,
+        .5-beat2*.2,
+        scale
+    );
+
+
+    /* neck/head */
+
+    drawHead(
+        head,
+        scale,
+        sway*.06,
+        t
+    );
+
+
+    /* moving rim light */
+
+    ctx.save();
+
+    ctx.globalCompositeOperation="screen";
+
+    let glow=ctx.createRadialGradient(
+        head.x-70*scale,
+        head.y-80*scale,
+        0,
+        head.x,
+        head.y,
+        250*scale
+    );
+
+    glow.addColorStop(
+        0,
+        "rgba(120,160,255,.09)"
+    );
+
+    glow.addColorStop(
+        1,
+        "rgba(120,160,255,0)"
+    );
+
+    ctx.fillStyle=glow;
+
+    ctx.beginPath();
+
+    ctx.arc(
+        head.x,
+        head.y,
+        250*scale,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+    ctx.restore();
+}
+
+
+/* =========================================================
+   PARTICLES
+========================================================= */
+
+const particles=[];
+
+for(let i=0;i<100;i++) {
+
+    particles.push({
+
+        x:Math.random(),
+        y:Math.random(),
+        size:Math.random()*2+0.3,
+        speed:Math.random()*.15+.02,
+        phase:Math.random()*Math.PI*2
+
+    });
+}
+
+
+function drawParticles(t) {
+
+    ctx.save();
+
+    ctx.globalCompositeOperation="screen";
+
+    particles.forEach(p=>{
+
+        let x=p.x*W;
+        let y=(p.y + Math.sin(t*p.speed+p.phase)*.015)*H;
+
+        let alpha=.15+
+            Math.sin(t*2+p.phase)*.08;
+
+        ctx.fillStyle=
+            `rgba(255,255,255,${alpha})`;
+
+        ctx.beginPath();
+
+        ctx.arc(
+            x,
+            y,
+            p.size,
+            0,
+            Math.PI*2
+        );
+
+        ctx.fill();
+    });
+
+    ctx.restore();
+}
+
+
+/* =========================================================
+   VIGNETTE
+========================================================= */
+
+function vignette() {
+
+    let g=ctx.createRadialGradient(
+        W/2,
+        H/2,
+        Math.min(W,H)*.15,
+        W/2,
+        H/2,
+        Math.max(W,H)*.75
+    );
+
+    g.addColorStop(
+        0,
+        "rgba(0,0,0,0)"
+    );
+
+    g.addColorStop(
+        .7,
+        "rgba(0,0,0,.12)"
+    );
+
+    g.addColorStop(
+        1,
+        "rgba(0,0,0,.72)"
+    );
+
+    ctx.fillStyle=g;
+    ctx.fillRect(0,0,W,H);
+}
+
+
+/* =========================================================
+   MOTION BLUR
+========================================================= */
+
+let previousTime=performance.now();
+
+function render(now) {
+
+    let t=now/1000;
+
+    let dt=(now-previousTime)/1000;
+    previousTime=now;
+
+    dt=Math.min(dt,.05);
+
+
+    /* camera movement */
+
+    cameraX=
+        Math.sin(t*.55)*7;
+
+    cameraY=
+        Math.sin(t*.8)*3;
+
+    cameraZoom=
+        1+
+        Math.sin(t*.45)*.018;
+
+
+    ctx.clearRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+
+    drawBackground(t);
+
+    drawLights(t);
+
+    drawFloor();
+
+    drawParticles(t);
+
+    drawDancer(t);
+
+    vignette();
+
+
+    requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+
+</script>
+
+</body>
+</html>
